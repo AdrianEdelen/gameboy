@@ -1,6 +1,6 @@
 use crate::cpu_core::instruction::*;
 use crate::cpu_core::registers::RegisterBank;
-use crate::{cpu_core::memory::MemoryBus, cpu_core::registers::RegistersU16, cpu_core::registers::RegistersU8, cpu_core::FlagsRegister::Flags};
+use crate::{cpu_core::memory::MemoryBus, cpu_core::registers::RegistersU16, cpu_core::registers::RegistersU8, cpu_core::flags_register::Flags};
 
 pub struct CPU {
     registers: RegisterBank,
@@ -19,6 +19,13 @@ impl CPU {
             is_halted: false,
         }
     }
+
+    pub fn load_rom(&mut self, data: Vec<u8>) {
+        for (i, &byte) in data.iter().enumerate() {
+            self.bus.write_byte(i as u16, byte)
+        }
+    }
+
     pub fn step(&mut self) {
         let mut instruction_byte = self.bus.read_byte(self.pc);
         let prefixed = instruction_byte == 0xCB; // 0xCB is the prefix byte
@@ -26,8 +33,9 @@ impl CPU {
             // if we get a prefix byte we should read the next byte
             instruction_byte = self.bus.read_byte(self.pc + 1);
         }
-        let next_pc = if let Some(instruction) = Instruction::from_byte(instruction_byte, prefixed)
+        let next_pc: u16 = if let Some(instruction) = Instruction::from_byte(instruction_byte, prefixed)
         {
+            println!("Executing instruction: 0x{instruction_byte:x}");
             self.execute(instruction)
         } else {
             let description = format!(
@@ -68,53 +76,29 @@ impl CPU {
             panic!("Handle Halt appropriately")
         }
         match instruction {
-            Instruction::ADD(target) => {
-                let value = match target {
-                    ArithmeticTarget::A => self.registers.get_register_u8(RegistersU8::A),
-                    ArithmeticTarget::B => self.registers.get_register_u8(RegistersU8::B),
-                    ArithmeticTarget::C => self.registers.get_register_u8(RegistersU8::C),
-                    ArithmeticTarget::D => self.registers.get_register_u8(RegistersU8::D),
-                    ArithmeticTarget::E => self.registers.get_register_u8(RegistersU8::E),
-                    ArithmeticTarget::H => self.registers.get_register_u8(RegistersU8::H),
-                    ArithmeticTarget::L => self.registers.get_register_u8(RegistersU8::L),
-                };
-
-                let new_value = self.add(value);
-                self.registers.set_register_u8(RegistersU8::A, new_value);
-                self.pc.wrapping_add(1)
-            }
-            Instruction::JP(test) => {
-                let jump_condition = match test {
-                    JumpTest::NotZero => !self.registers.get_flag(Flags::ZERO),
-                    JumpTest::NotCarry => !self.registers.get_flag(Flags::CARRY),
-                    JumpTest::Zero => self.registers.get_flag(Flags::ZERO),
-                    JumpTest::Carry => self.registers.get_flag(Flags::CARRY),
-                    JumpTest::Always => true,
-                };
-                self.jump(jump_condition)
-            }
+            Instruction::ADD(target) => self.handle_add(target),
+            Instruction::JP(test) => self.handle_jp(test),
             Instruction::LD(load_type) => match load_type {
                 LoadType::Byte(target, source) => {
                     let source_value = match source {
-                        LoadByteSource::A => self.registers.get_register_u8(RegistersU8::A),
-                        LoadByteSource::D8 => self.read_next_byte(),
-                        LoadByteSource::HLI => self.bus.read_byte(self.registers.get_register_u16(RegistersU16::HL)),
+                        LoadSource::A => self.registers.get_register_u8(RegistersU8::A),
+                        LoadSource::D8 => self.read_next_byte(),
+                        LoadSource::HLI => self.bus.read_byte(self.registers.get_register_u16(RegistersU16::HL)),
                         _ => panic!("TODO: implement other sources")
                     };
                     match target {
-                        LoadByteTarget::A => self.registers.set_register_u8(RegistersU8::A, source_value),
-                        LoadByteTarget::HLI => {
+                        LoadTarget::A => self.registers.set_register_u8(RegistersU8::A, source_value),
+                        LoadTarget::HLI => {
                             self.bus.write_byte(self.registers.get_register_u16(RegistersU16::HL), source_value)
                         }
                         _ => panic!("TODO: implement other targets")
                     };
                     match source {
-                        LoadByteSource::D8 => self.pc.wrapping_add(2),
+                        LoadSource::D8 => self.pc.wrapping_add(2),
                         _ => self.pc.wrapping_add(1),
                     }
                 }
-                _ => panic!("TODO: implement other load types")
-            },
+                _ => panic!("TODO: implement other load types") },
             Instruction::CALL(test) => {
                 let jump_condition = match test {
                     JumpTest::Zero =>     self.registers.get_flag(Flags::ZERO),
@@ -159,10 +143,22 @@ impl CPU {
                 self.is_halted = true;
                 panic!("reach halt instruction")
             }
+            Instruction::INC(target) => {
+                match target {
+                    IncDecTarget::A =>{
+                        let a = self.registers.get_register_u8(RegistersU8::A);
+                        self.registers.set_register_u8(RegistersU8::A, a.wrapping_add(1))
+                    } 
+                    IncDecTarget::DE => panic!("Inc for target DE not implemented"),
+                    IncDecTarget::BC => todo!("Inc for target BC not implemented"),
+                    IncDecTarget::B => todo!("Inc for target B not implemented"),
+                    IncDecTarget::C => todo!("Inc for target c is not implemented"),
+                };
+                self.pc.wrapping_add(1)
+
+            }
             _ => {
-                panic!("unsupported instruction encountered");
-                /* TODO: support more instructions */
-                // self.pc
+                panic!("unsupported instruction encountered: {:?}", instruction);
             }
         }
     }
@@ -238,4 +234,30 @@ impl CPU {
     fn sra(&mut self) {} // SRA (shift right arithmetic) - arithmetic shift a specific register right by 1
     fn sla(&mut self) {} // SLA (shift left arithmetic) - arithmetic shift a specific register left by 1
     fn swap(&mut self) {} // SWAP (swap nibbles) - switch upper and lower nibble of a specific register
+
+    fn handle_add(&mut self, target: ArithmeticTarget) -> u16 {
+        let value = match target {
+                    ArithmeticTarget::A => self.registers.get_register_u8(RegistersU8::A),
+                    ArithmeticTarget::B => self.registers.get_register_u8(RegistersU8::B),
+                    ArithmeticTarget::C => self.registers.get_register_u8(RegistersU8::C),
+                    ArithmeticTarget::D => self.registers.get_register_u8(RegistersU8::D),
+                    ArithmeticTarget::E => self.registers.get_register_u8(RegistersU8::E),
+                    ArithmeticTarget::H => self.registers.get_register_u8(RegistersU8::H),
+                    ArithmeticTarget::L => self.registers.get_register_u8(RegistersU8::L),
+                };
+
+                let new_value = self.add(value);
+                self.registers.set_register_u8(RegistersU8::A, new_value);
+                self.pc.wrapping_add(1)
+    }
+    fn handle_jp(&mut self, test: JumpTest) -> u16 {
+        let jump_condition = match test {
+            JumpTest::NotZero => !self.registers.get_flag(Flags::ZERO),
+            JumpTest::NotCarry => !self.registers.get_flag(Flags::CARRY),
+            JumpTest::Zero => self.registers.get_flag(Flags::ZERO),
+            JumpTest::Carry => self.registers.get_flag(Flags::CARRY),
+            JumpTest::Always => true,
+        };
+        self.jump(jump_condition)
+    }
 }

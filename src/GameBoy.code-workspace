@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../../Downloads/gb-test-roms-master/gb-test-roms-master"
+		}
+	],
+	"settings": {
+		"rust-analyzer.linkedProjects": [
+			".\\emulator\\Cargo.toml"
+		]
+	}
+}

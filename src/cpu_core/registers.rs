@@ -1,4 +1,4 @@
-use crate::cpu_core::FlagsRegister::{FlagsRegister, Flags};
+use crate::cpu_core::flags_register::{FlagsRegister, Flags};
 
 pub enum RegistersU8 {
     A,B,C,D,E,F,H,L,
